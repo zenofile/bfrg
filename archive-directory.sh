@@ -22,7 +22,7 @@ readonly \
 	VERBOSE=1 \
 	SOURCE_PATH='/mnt/i' \
 	BLK_TARGET_PATHS=(
-		'/mnt/j'
+		'/mnt/h'
 		'/mnt/f/Users/zeno/Sync/backup/keepass'
 		'/mnt/f/Users/zeno/OneDrive/_backup/keys'
 	) \
@@ -32,7 +32,7 @@ readonly \
 	) \
 	SAFE_TMP='/mnt/g/cryptmp/' \
 	ARCHIVE_NAME="keys_${SCRIPT_EPOCH}.tar.xz" \
-	LOG_FILE="folder-backup_${SCRIPT_EPOCH}.log"
+	LOG_FILE="archive-directory_${SCRIPT_EPOCH}.log"
 
 init_logger() {
 	readonly LOG_CMD='printf "[%s]: %s\n" "$(date --rfc-3339=seconds)" "$*"'
@@ -308,8 +308,9 @@ apply_do_path() {
 	local -r delegate=$1
 	for path in "${target_paths[@]}"; do
 		log "processing ${path}"
-		local -r arg=$([[ -n ${*:3} ]] && printf "with argument(s) ${*:3}")
-		log "applying function ${delegate}" "$arg"
+		local arg="$([[ -n ${*:3} ]] && printf " with argument(s) %s" "${*:3}")"
+		log "applying function ${delegate}${arg}"
+		unset arg
 		$delegate "$path" "${@:3}"
 	done
 }
