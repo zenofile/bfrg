@@ -34,8 +34,10 @@ readonly \
 	ARCHIVE_NAME="keys_${SCRIPT_EPOCH}.tar.xz" \
 	LOG_FILE="archive-directory_${SCRIPT_EPOCH}.log"
 
+# end of configuration section
+
 init_logger() {
-	readonly LOG_CMD='printf "[%s]: %s\n" "$(date --rfc-3339=seconds)" "$*"'
+	readonly LOG_CMD='printf "[%s]: %s\n" "$(printf "%(%Y-%m-%d %T%z)T")" "$*"'
 
 	LOG_ABS="$(realpath "$LOG_FILE")"
 	if [[ ! -w "$(dirname "$LOG_ABS")" ]]; then
