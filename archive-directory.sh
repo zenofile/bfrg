@@ -15,18 +15,20 @@ set -o pipefail
 
 readonly SCRIPT_EPOCH=$EPOCHSECONDS
 readonly \
+	ARCHIVE_CLEANUP=1 \
 	KEEP_DAYS=365 \
 	SELF_REPLICATE=1 \
 	DATA_REDUNDANCY=5 \
-	NO_RSYNC=0 \
 	VERBOSE=1 \
 	SOURCE_PATH='/mnt/i' \
-	BLK_TARGET_PATHS=(
+	BLK_LOCAL_TARGETS=(
 		'/mnt/h'
 		'/mnt/f/Users/zeno/Sync/backup/keepass'
 		'/mnt/f/Users/zeno/OneDrive/_backup/keys'
 	) \
-	SCP_TARGET_PATHS=(
+	SCP_REMOTE_TARGETS=(
+	) \
+	RSYNC_REMOTE_TARGETS=(
 		'zeno@sirius.fritz.box:/volume1/homes/zeno/rsync_backup/keys'
 		'zeno@sirius.fritz.box:/volume1/sync/GoogleDrive'
 	) \
@@ -162,11 +164,29 @@ ensure_commands() {
 check_tools() {
 	ensure_commands gpg xz find
 
-	declare -g USE_RSYNC=1
-	if (( NO_RSYNC == 0 )) && ! require_command rsync; then
-		get_user_input "rsync not found, falling back to cp"
-		log "falling back to cp for copying files due to missing rsync binary"
+	declare -g USE_RSYNC=1 USE_SCP=1
+
+	if ! require_command rsync; then
+		# rsync was at least implicitly requested but not found
+		if (( ${#RSYNC_REMOTE_TARGETS[@]} > 0 )); then
+			if require_command ssh; then
+				# try to gracefully fall back to SCP
+				log "rsync remote paths specified but no rsync binary found, falling back to scp"
+				SCP_REMOTE_TARGETS+=("${RSYNC_REMOTE_TARGETS[@]}")
+			else
+				get_user_input "rsync remote paths specified but no ssh binary found, continue anyway?"
+			fi
+		fi
+		log "skipping all rsync operations"
 		USE_RSYNC=0
+	fi
+
+	if ! require_command scp; then
+		if (( ${#SCP_REMOTE_TARGETS[@]} > 0 )); then
+			get_user_input "scp remote paths exist but no scp binary found, continue anyway?"
+		fi
+		log "skipping all scp operations"
+		USE_SCP=0
 	fi
 
 	declare -g USE_PAR=1
@@ -181,7 +201,7 @@ verify_path_exists() {
 	log "verifying if path ${1} exists"
 	if [[ ! -d "$1" ]]; then
 		log "path ${1} does not exist"
-		get_user_input "Path ${1} does not exist, proceed?"
+		get_user_input "Path ${1} does not exist, continue?"
 		return 1
 	fi
 }
@@ -190,7 +210,7 @@ verify_file_exists() {
 	log "verifying if file ${1} exists"
 	if [[ ! -f "$1" ]]; then
 		log "file ${1} does not exist"
-		get_user_input "File ${1} does not exist, proceed?"
+		get_user_input "File ${1} does not exist, continue?"
 		return 1
 	fi
 }
@@ -198,8 +218,8 @@ verify_file_exists() {
 verify_path_writable() {
 	log "verifying if path ${1} is writable"
 	if [[ ! -w "$1" ]]; then
-		log "path ${1} is not writtable"
-		get_user_input "Path ${1} is not writable, proceed?"
+		log "path ${1} is not writable"
+		get_user_input "Path ${1} is not writable, continue?"
 		return 1
 	fi
 }
@@ -208,7 +228,7 @@ verify_data_written() {
 	log "verifying file integrity of ${2}"
 	if ! cmp "$1" "$2"; then
 		log "there was an error validating ${2}"
-		get_user_input "There was an error validating ${2}, proceed?"
+		get_user_input "There was an error validating ${2}, continue?"
 		return 1
 	fi
 }
@@ -287,6 +307,11 @@ scp_copy_callback() {
 	gci scp -qr "$WORKING_DIR" "$1"
 }
 
+rsync_copy_callback() {
+	log "using rsync over ssh for remote copying ${1}"
+	gci rsync -qzact -e ssh "$WORKING_DIR" "$1"
+}
+
 archive_cleanup_callback() {
 	# $1 -> target path
 	# $2 -> maximum directory age in days
@@ -310,7 +335,7 @@ apply_do_path() {
 	local -r delegate=$1
 	for path in "${target_paths[@]}"; do
 		log "processing ${path}"
-		local arg="$([[ -n ${*:3} ]] && printf " with argument(s) %s" "${*:3}")"
+		local arg="$([[ -n ${*:3} ]] && printf " with argument(s) '%s'" "${*:3}")"
 		log "applying function ${delegate}${arg}"
 		unset arg
 		$delegate "$path" "${@:3}"
@@ -319,9 +344,16 @@ apply_do_path() {
 
 process_targets() {
 	# $1 -> target paths array name (ref)
-	apply_do_path blk_copy_callback BLK_TARGET_PATHS
-	apply_do_path archive_cleanup_callback BLK_TARGET_PATHS $KEEP_DAYS
-	apply_do_path scp_copy_callback SCP_TARGET_PATHS
+	apply_do_path blk_copy_callback BLK_LOCAL_TARGETS
+	if (( USE_RSYNC > 0 )); then
+		apply_do_path rsync_copy_callback RSYNC_REMOTE_TARGETS
+	fi
+	if (( USE_SCP > 0 )); then
+		apply_do_path scp_copy_callback SCP_REMOTE_TARGETS
+	fi
+	if (( ARCHIVE_CLEANUP > 0 )); then
+		apply_do_path archive_cleanup_callback BLK_LOCAL_TARGETS $KEEP_DAYS
+	fi
 }
 
 trap 'cleanup "${?}" "${LINENO}" "${BASH_LINENO}" "${BASH_COMMAND}" $(printf "::%s" ${FUNCNAME[@]:-})' EXIT SIGINT
