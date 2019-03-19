@@ -1,25 +1,21 @@
 #!/bin/env bash
 
-# make sure the SAFE_TMP points to either:
-# - a volatile (tmpfs) ramdisk
-# - a traditional block device (magnetic hdd)
-# - an encrypted location (efs)
-# using an unencrypted flash based device makes this cryptographically unsafe
-
-# unguarded commands are okay to fail
-set +o errexit
-# increase robustness
+set -o errexit
 set -o nounset
 set -o pipefail
-[[ "${TRACE:-}" ]] && set -x
+[[ "${TRACE:-}" ]] && set -o xtrace
 
 readonly SCRIPT_EPOCH=$EPOCHSECONDS
 readonly \
 	ARCHIVE_CLEANUP=1 \
 	KEEP_DAYS=365 \
 	SELF_REPLICATE=1 \
+	SAFE_DELETE=1 \
 	DATA_REDUNDANCY=5 \
 	VERBOSE=1 \
+	# SAFE_TMP should ideally point to an encrypted or volatile
+	# location in order to avoid leaking data to the block device
+	SAFE_TMP='/mnt/g/cryptmp/' \
 	SOURCE_PATH='/mnt/i' \
 	BLK_LOCAL_TARGETS=(
 		'/mnt/h'
@@ -32,13 +28,12 @@ readonly \
 		'zeno@sirius.fritz.box:/volume1/homes/zeno/rsync_backup/keys'
 		'zeno@sirius.fritz.box:/volume1/sync/GoogleDrive'
 	) \
-	SAFE_TMP='/mnt/g/cryptmp/' \
 	ARCHIVE_NAME="keys_${SCRIPT_EPOCH}.tar.xz" \
 	LOG_FILE="archive-directory_${SCRIPT_EPOCH}.log"
 
 # end of configuration section
 
-init_logger() {
+_init_logger() {
 	readonly LOG_CMD='printf "[%s]: %s\n" "$(printf "%(%Y-%m-%d %T%z)T")" "$*"'
 
 	LOG_ABS="$(realpath "$LOG_FILE")"
@@ -47,94 +42,101 @@ init_logger() {
 		LOG_ABS="/tmp/folder-backup_${SCRIPT_EPOCH}.log"
 	fi
 	if (( VERBOSE > 0 )); then
-		log() {
-			eval "$LOG_CMD" | tee -a "$LOG_ABS"
+		_log() {
+			eval "$LOG_CMD" | command tee -a "$LOG_ABS"
 		}
 	else
-		log() {
+		_log() {
 			eval "$LOG_CMD" >> "$LOG_ABS"
 		}
 	fi
 }
 
-create_temp() {
-	log "creating temporary directory at ${SAFE_TMP}"
+_create_temp() {
+	_log "creating temporary directory at ${SAFE_TMP}"
 	if ! MYTMP="$(mktemp -qd --tmpdir="${SAFE_TMP}")"; then
-		log "could not create a temporary directory at ${SAFE_TMP}"
+		_log "could not create a temporary directory at ${SAFE_TMP}"
 		exit 1
 	fi
-	log "${MYTMP} created"
+	_log "${MYTMP} created"
 
 	readonly MYTMP \
 		WORKING_DIR="${MYTMP}/${SCRIPT_EPOCH}"
 	readonly ARCHIVE_SOURCE_PATH="${WORKING_DIR}/${ARCHIVE_NAME}.gpg"
 }
 
-remove_temp() {
-	log 'deleting temporary files'
+_secure_delete_file() {
+	local -r file="$1"
+	if (( SAFE_DELETE > 0 )); then
+		_log "shredding ${file}"
+		_gcl shred "$file"
+	fi
+	_log "removing ${file}"
+	_gcl rm "$file"
+}
+
+_remove_temp() {
+	_log 'deleting temporary files'
 	if [[ -n "$MYTMP" ]]; then
 	{
 		command find "$MYTMP" -mindepth 1 -maxdepth 2 -type f -print0 \
 		| while IFS= read -r -d '' file; do
-			log "shredding ${file}"
-			gcl shred "$file"
-			log "removing ${file}"
-			gcl rm "$file"
+			_secure_delete_file "$file"
 		done
-		log "removing ${WORKING_DIR}"
+		_log "removing ${WORKING_DIR}"
 		command find "$MYTMP" -mindepth 1 -maxdepth 1 -type d -exec rmdir {} +
-		log "removing ${MYTMP}"
-		gcl rmdir "$MYTMP"
+		_log "removing ${MYTMP}"
+		_gcl rmdir "$MYTMP"
 	} 2>/dev/null
 	fi
 }
 
-cleanup() {
+_cleanup() {
 	local err="${1:-}" \
 		line="${2:-}" \
-		linecallfunc="${3:-}" \
-		command="${4:-}" \
-		funcstack="${5:-}"
+		linecall="${3:-}" \
+		cmd="${4:-}" \
+		stack="${5:-}"
 
 	if (( err != 0 )); then
-		log "ERROR: line $line - command '$command' exited with status: $err."
-		log "ERROR: In $funcstack called at line $linecallfunc."
-		log "DEBUG: From function ${funcstack[0]} (line $linecallfunc)."
+		_log "ERROR: line $line - command '$cmd' exited with status: $err."
+		_log "ERROR: In $stack called at line $linecall."
+		_log "DEBUG: From function ${stack[0]} (line $linecall)."
 	fi
 
-	remove_temp
+	_remove_temp
 }
 
-gci() {
+_gci() {
 	# guard command interactive
 	local -r invocation="$*"
-	log "invoking ${invocation}"
+	_log "invoking ${invocation}"
 	if ! command "$@"; then
-		log "command $invocation failed."
-		get_user_input "$invocation failed, proceed?"
+		_log "command $invocation failed."
+		_get_user_input "$invocation failed, proceed?"
 	fi
 }
 
-gce() {
+_gce() {
 	# guard command exit
 	local -r invocation="$*"
-	log "invoking ${invocation}"
+	_log "invoking ${invocation}"
 	if ! command "$@"; then
-		log "command $invocation failed."
+		_log "command $invocation failed."
 		exit 1
 	fi
 }
 
-gcl() {
-	# guard command log
+_gcl() {
+	# guard command _log
 	local -r invocation="$*"
-	log "invoking ${invocation}"
+	_log "invoking ${invocation}"
 	if ! command "$@"; then
-		log "command $invocation failed."
+		_log "command $invocation failed."
 	fi
 }
 
-get_user_input() {
+_get_user_input() {
 	while read -p "${1} " yn; do
     	case $yn in
         	[Yy]* ) break;;
@@ -144,224 +146,228 @@ get_user_input() {
     done
 }
 
-require_command() {
-	log "checking if ${1} is available"
-	if ! hash "$1" &>/dev/null; then
-		log "could not find ${1}"
+_require_command() {
+	local -r cmd="$1"
+	_log "checking if ${cmd} is available"
+	if ! hash "$cmd" &>/dev/null; then
+		_log "could not find ${cmd}"
 		return 1
 	fi
 }
 
-ensure_commands() {
-	for c in "$@"; do
-		if ! require_command "$c"; then
-			log "${c} is essential, aborting"
+_ensure_commands() {
+	for cmd in "$@"; do
+		if ! _require_command "$cmd"; then
+			_log "${cmd} is essential, aborting"
 			exit 1
 		fi
 	done
 }
 
-check_tools() {
-	ensure_commands gpg xz find
+_check_tools() {
+	_ensure_commands gpg xz find
 
 	declare -g USE_RSYNC=1 USE_SCP=1
 
-	if ! require_command rsync; then
+	if ! _require_command rsync; then
 		# rsync was at least implicitly requested but not found
 		if (( ${#RSYNC_REMOTE_TARGETS[@]} > 0 )); then
-			if require_command ssh; then
+			if _require_command ssh; then
 				# try to gracefully fall back to SCP
-				log "rsync remote paths specified but no rsync binary found, falling back to scp"
+				_log "rsync remote paths specified but no rsync binary found, falling back to scp"
 				SCP_REMOTE_TARGETS+=("${RSYNC_REMOTE_TARGETS[@]}")
 			else
-				get_user_input "rsync remote paths specified but no ssh binary found, continue anyway?"
+				_get_user_input "rsync remote paths specified but no ssh binary found, continue anyway?"
 			fi
 		fi
-		log "skipping all rsync operations"
+		_log "skipping all rsync operations"
 		USE_RSYNC=0
 	fi
 
-	if ! require_command scp; then
+	if ! _require_command scp; then
 		if (( ${#SCP_REMOTE_TARGETS[@]} > 0 )); then
-			get_user_input "scp remote paths exist but no scp binary found, continue anyway?"
+			_get_user_input "scp remote paths exist but no scp binary found, continue anyway?"
 		fi
-		log "skipping all scp operations"
+		_log "skipping all scp operations"
 		USE_SCP=0
 	fi
 
 	declare -g USE_PAR=1
-	if (( DATA_REDUNDANCY > 0 )) && ! require_command par2create; then
-		get_user_input "par2create not found, skip recovery data creating?"
-		log "skipping the creation of par2 recovery files due to missing par2 binary"
+	if (( DATA_REDUNDANCY > 0 )) && ! _require_command par2create; then
+		_get_user_input "par2create not found, skip recovery data creating?"
+		_log "skipping the creation of par2 recovery files due to missing par2 binary"
 		USE_PAR=0
 	fi
 }
 
-verify_path_exists() {
-	log "verifying if path ${1} exists"
-	if [[ ! -d "$1" ]]; then
-		log "path ${1} does not exist"
-		get_user_input "Path ${1} does not exist, continue?"
+_verify_path_exists() {
+	local -r path="$1"
+	_log "verifying if path ${path} exists"
+	if [[ ! -d "$path" ]]; then
+		_log "path ${path} does not exist"
+		_get_user_input "Path ${path} does not exist, continue?"
 		return 1
 	fi
 }
 
-verify_file_exists() {
-	log "verifying if file ${1} exists"
-	if [[ ! -f "$1" ]]; then
-		log "file ${1} does not exist"
-		get_user_input "File ${1} does not exist, continue?"
+_verify_file_exists() {
+	local -r file="$1"
+	_log "verifying if file ${file} exists"
+	if [[ ! -f "$file" ]]; then
+		_log "file ${file} does not exist"
+		_get_user_input "File ${file} does not exist, continue?"
 		return 1
 	fi
 }
 
-verify_path_writable() {
-	log "verifying if path ${1} is writable"
-	if [[ ! -w "$1" ]]; then
-		log "path ${1} is not writable"
-		get_user_input "Path ${1} is not writable, continue?"
+_verify_path_writable() {
+	local -r path="$1"
+	_log "verifying if path ${path} is writable"
+	if [[ ! -w "$path" ]]; then
+		_log "path ${path} is not writable"
+		_get_user_input "Path ${path} is not writable, continue?"
 		return 1
 	fi
 }
 
-verify_data_written() {
-	log "verifying file integrity of ${2}"
-	if ! cmp "$1" "$2"; then
-		log "there was an error validating ${2}"
-		get_user_input "There was an error validating ${2}, continue?"
+_verify_data_written() {
+	local -r src="$1" dst="$2"
+	_log "verifying file integrity of ${dst}"
+	if ! cmp "$src" "$dst"; then
+		_log "there was an error validating ${dst}"
+		_get_user_input "There was an error validating ${dst}, continue?"
 		return 1
 	fi
 }
 
-safe_copy_file() {
-	# $1 -> source file
-	# $2 -> destination directory
-	log "copying ${1} to ${2}"
-	verify_file_exists "$1" \
-		&& verify_path_exists "$2" \
-		&& verify_path_writable "$2" \
-		&& gce cp "$1" "$2" \
-		&& verify_data_written "$1" "${2}/$(basename "${1}")"
+_safe_copy_file() {
+	local -r src="$1" dst="$2"
+	_log "copying ${src} to ${dst}"
+	_verify_file_exists "$src" \
+		&& _verify_path_exists "$dst" \
+		&& _verify_path_writable "$dst" \
+		&& _gce cp "$src" "$dst" \
+		&& _verify_data_written "$src" "${dst}/$(basename "${src}")"
 }
 
-safe_shallow_copy_dir() {
+_safe_shallow_copy_dir() {
+	local -r src="$1" dst="$2"
 	if (( USE_RSYNC > 0 )); then
-		verify_path_writable "$2" \
-			&& gce rsync -qat "$WORKING_DIR" "$2" \
-			&& gce rsync -qact "$WORKING_DIR" "$2"
+		_verify_path_writable "$dst" \
+			&& _gce rsync -qat "$WORKING_DIR" "$dst" \
+			&& _gce rsync -qact "$WORKING_DIR" "$dst"
 	else
-		log "invoking cp"
-		verify_path_writable "${2}" \
-		&& gce mkdir -p "${2}/${SCRIPT_EPOCH}"
-		for f in "$1/"*; do
-			safe_copy_file "$f" "${2}/${SCRIPT_EPOCH}"
+		_log "invoking cp"
+		_verify_path_writable "${dst}" \
+		&& _gce mkdir -p "${dst}/${SCRIPT_EPOCH}"
+		for f in "$src/"*; do
+			_safe_copy_file "$f" "${dst}/${SCRIPT_EPOCH}"
 		done
 	fi
 }
 
-create_recovery_data() {
+_create_recovery_data() {
 	pushd .
-	log "creating recovery information with 5% redundancy"
+	_log "creating recovery information with 5% redundancy"
 	command cd "$WORKING_DIR" \
-		&& gci par2create -q -q -r${DATA_REDUNDANCY} "$ARCHIVE_SOURCE_PATH"
+		&& _gci par2create -q -q -r${DATA_REDUNDANCY} "$ARCHIVE_SOURCE_PATH"
 	popd
 }
 
-create_archive_folder() {
-	verify_path_exists "$SOURCE_PATH"
-	gce mkdir -p "$WORKING_DIR"
-	(command tar --exclude 'System Volume Information' -cf - -C "$SOURCE_PATH" . | command xz -q -9e --threads=0 -v > "${MYTMP}/${ARCHIVE_NAME}") 2>&1 | tee -a "$LOG_ABS"
-#	local tar_status=${PIPESTATUS[0]}
+_create_archive_folder() {
+	_verify_path_exists "$SOURCE_PATH"
+	_gce mkdir -p "$WORKING_DIR"
+	(command tar --exclude 'System Volume Information' -cf - -C "$SOURCE_PATH" . | command xz -q -9e --threads=0 -v > "${MYTMP}/${ARCHIVE_NAME}") 2>&1 | command tee -a "$LOG_ABS"
 	local -r tar_pipe_status=$?
-	command gpg -q --symmetric --cipher-algo AES256 --output "${ARCHIVE_SOURCE_PATH}" "${MYTMP}/${ARCHIVE_NAME}" 2>&1 | tee -a "$LOG_ABS"
-#	local gpg_status=${PIPESTATUS[0]}
+	command gpg -q --symmetric --cipher-algo AES256 --output "${ARCHIVE_SOURCE_PATH}" "${MYTMP}/${ARCHIVE_NAME}" 2>&1 | command tee -a "$LOG_ABS"
 	local -r gpg_pipe_status=$?
 
 	if (( tar_pipe_status != 0 )); then
-		log "tar or xz error: ${tar_pipe_status}"
+		_log "tar or xz error: ${tar_pipe_status}"
 		exit $tar_pipe_status
 	fi
 	if (( gpg_pipe_status != 0 )); then
-		log "gpg error: ${gpg_pipe_status}"
+		_log "gpg error: ${gpg_pipe_status}"
 		exit $gpg_pipe_status
 	fi
 
 	if (( USE_PAR > 0 )); then
-		create_recovery_data
+		_create_recovery_data
 	fi
 
 	if (( SELF_REPLICATE > 0 )); then
-		log "copying myself as ${0}"
-		safe_copy_file "${BASH_SOURCE[0]}" "${WORKING_DIR}"
+		_log "copying myself as ${0}"
+		_safe_copy_file "${BASH_SOURCE[0]}" "${WORKING_DIR}"
 	fi
 }
 
-blk_copy_callback() {
-	# $1 -> target path
-	log "copying archive folder"
-	safe_shallow_copy_dir "$WORKING_DIR" "$1"
+_blk_copy_callback() {
+	local -r dst="$1"
+	_log "copying archive folder"
+	_safe_shallow_copy_dir "$WORKING_DIR" "$dst"
 }
 
-scp_copy_callback() {
-	log "initiating archive folder remote copy to ${1}"
-	gci scp -qr "$WORKING_DIR" "$1"
+_scp_copy_callback() {
+	local -r dst="$1"
+	_log "initiating archive folder remote copy to ${dst}"
+	_gci scp -qr "$WORKING_DIR" "$dst"
 }
 
-rsync_copy_callback() {
-	log "using rsync over ssh for remote copying ${1}"
-	gci rsync -qzact -e ssh "$WORKING_DIR" "$1"
+_rsync_copy_callback() {
+	local -r dst="$1"
+	_log "using rsync over ssh for remote copying ${dst}"
+	_gci rsync -qzact -e ssh "$WORKING_DIR" "$dst"
 }
 
-archive_cleanup_callback() {
-	# $1 -> target path
-	# $2 -> maximum directory age in days
-	if [[ -d "$1" ]]; then
-		log "cleaning up old archives at ${1}"
-		command find "$1" -mindepth 1 -maxdepth 1 -type d -mtime +${2} -regextype posix-extended -regex "^${1}/[0-9]{10}$" -print0 \
+_archive_cleanup_callback() {
+	local -r dst="$1" age=$2
+	if [[ -d "$dst" ]]; then
+		_log "cleaning up old archives at ${dst}"
+		command find "$dst" -mindepth 1 -maxdepth 1 -type d -mtime +${age} -regextype posix-extended -regex "^${dst}/[0-9]{10}$" -print0 \
 			| while IFS= read -r -d '' dir; do
-				log "removing directory ${dir} and all of its content"
+				_log "removing directory ${dir} and all of its content"
 				command rm -rf "$dir"
 			done 2>/dev/null
 	else
-		log "invalid cleanup callback call, ${1} is not a directory"
+		_log "invalid _cleanup callback call, ${dst} is not a directory"
 	fi
 }
 
-apply_do_path() {
+_apply_do_path() {
 	# $1 -> target paths array name (ref)
 	# $2 -> function pointer (ref)
 	# $@:3 -> any other arguments that should be forwarded to the function
 	local -n target_paths=$2
 	local -r delegate=$1
 	for path in "${target_paths[@]}"; do
-		log "processing ${path}"
+		_log "processing ${path}"
 		local arg="$([[ -n ${*:3} ]] && printf " with argument(s) '%s'" "${*:3}")"
-		log "applying function ${delegate}${arg}"
+		_log "applying function ${delegate}${arg}"
 		unset arg
 		$delegate "$path" "${@:3}"
 	done
 }
 
-process_targets() {
+_process_targets() {
 	# $1 -> target paths array name (ref)
-	apply_do_path blk_copy_callback BLK_LOCAL_TARGETS
+	_apply_do_path _blk_copy_callback BLK_LOCAL_TARGETS
 	if (( USE_RSYNC > 0 )); then
-		apply_do_path rsync_copy_callback RSYNC_REMOTE_TARGETS
+		_apply_do_path _rsync_copy_callback RSYNC_REMOTE_TARGETS
 	fi
 	if (( USE_SCP > 0 )); then
-		apply_do_path scp_copy_callback SCP_REMOTE_TARGETS
+		_apply_do_path _scp_copy_callback SCP_REMOTE_TARGETS
 	fi
 	if (( ARCHIVE_CLEANUP > 0 )); then
-		apply_do_path archive_cleanup_callback BLK_LOCAL_TARGETS $KEEP_DAYS
+		_apply_do_path _archive_cleanup_callback BLK_LOCAL_TARGETS $KEEP_DAYS
 	fi
 }
 
-trap 'cleanup "${?}" "${LINENO}" "${BASH_LINENO}" "${BASH_COMMAND}" $(printf "::%s" ${FUNCNAME[@]:-})' EXIT SIGINT
+trap '_cleanup "${?}" "${LINENO}" "${BASH_LINENO}" "${BASH_COMMAND}" $(printf "::%s" ${FUNCNAME[@]:-})' ERR EXIT SIGINT
 
-init_logger
-create_temp
-check_tools
-create_archive_folder
-process_targets
+_init_logger
+_create_temp
+_check_tools
+_create_archive_folder
+_process_targets
 
 #EOF
