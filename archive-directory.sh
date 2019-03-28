@@ -1,5 +1,7 @@
 #!/bin/env bash
 
+(( ${BASH_VERSINFO:-0} < 5 )) && { echo "script requires bash version >= 5"; exit 3; }
+
 set -o errexit
 set -o nounset
 set -o pipefail
