@@ -17,6 +17,7 @@
 set -o nounset
 set -o pipefail
 set -o errexit
+
 [[ ${TRACE:-} ]] && set -o xtrace
 
 (( ${BASH_VERSINFO:-0} < 4 )) && { echo "script requires bash version >= 4"; exit 3; }
@@ -46,7 +47,8 @@ SELF_REPLICATE=${SELF_REPLICATE:-1}
 SAFE_DELETE=${SAFE_DELETE:-1}
 DATA_REDUNDANCY=${DATA_REDUNDANCY:-5}
 VERBOSE=${VERBOSE:-1}
-FAIL_SILENTLY=${FAIL_SILENTLY:-0}
+NON_INTERACTIVE=${NON_INTERACTIVE:-0}
+ERROR_ABORT=${ERROR_ABORT:-0}
 SAFE_TMP="${SAFE_TMP:-/tmp}"
 EXCLUDE_LIST=( "${EXCLUDE_LIST[@]:-${default_excludes[@]}}" )
 ARCHIVE_NAME="${ARCHIVE_NAME:-keys_${SCRIPT_EPOCH}.tar.xz}"
@@ -137,6 +139,8 @@ _cleanup() {
 
     _remove_temp
     _gc sync
+
+    (( errors > 0 )) && _log "total number of non-zero returns: ${errors}"
 }
 
 _gc() {
@@ -149,32 +153,8 @@ _gc() {
     fi
 }
 
-_gci() {
-    if ! _gc "$@"; then
-        _input_dispatch "$invocation failed, proceed?"
-    fi
-}
-
-_gce() {
-    if ! _gc "$@"; then
-        _die 1 "command $invocation failed."
-    fi
-}
-
-_input_dispatch() {
-    if (( FAIL_SILENTLY == 0)); then
-        (( errors++ ))
-        _log "failing silently."
-        return 0
-    fi
-    while read -r -p "${1} " yn; do
-        case $yn in
-            [Yy]* ) (( errors++ )); break;;
-            [Nn]* ) _die 1;;
-            * ) printf "Please answer yes or no.\n";;
-        esac
-    done
-}
+_gci() { _gc "$@" || _input_dispatch "$* failed, proceed?"; }
+_gce() { _gc "$@" || _die 1 "$* failed."; }
 
 _require_command() {
     local -r cmd="$1"
@@ -230,12 +210,28 @@ _verify_data_written() {
     fi
 }
 
-# short wrappers with input dispatch
-_vpei() { _verify_path_exists "$1" || _input_dispatch "Path ${1} does not exist, continue?"; }
-_vfei() { _verify_file_exists "$1" || _input_dispatch "File ${1} does not exist, continue?"; }
+_input_dispatch() {
+    if (( NON_INTERACTIVE > 0)); then
+        (( errors++ ))
+        _log "!! (error) non-interactive, suppressing prompt"
+        (( ERROR_ABORT > 0 )) && return 1
+        return 0
+    fi
+    while read -r -p "${1} " yn; do
+        case $yn in
+            [Yy]* ) (( errors++ )); break;;
+            [Nn]* ) _die 1;;
+            * ) printf "Please answer yes or no.\n";;
+        esac
+    done
+}
 
-_vpwi() { _verify_path_writable "$1" || _input_dispatch "Path ${1} is not writable, continue?"; }
-_vdwi() { _verify_data_written "$1" "$2" || _input_dispatch "There was an error validating ${2}, continue?"; }
+# short wrappers with input dispatch
+_vped() { _verify_path_exists "$1" || _input_dispatch "Path ${1} does not exist, continue?"; }
+_vfed() { _verify_file_exists "$1" || _input_dispatch "File ${1} does not exist, continue?"; }
+
+_vpwd() { _verify_path_writable "$1" || _input_dispatch "Path ${1} is not writable, continue?"; }
+_vdwd() { _verify_data_written "$1" "$2" || _input_dispatch "There was an error validating ${2}, continue?"; }
 
 _check_targets() {
     _ensure_commands gpg find "${COMPRESSOR_CMD}"
@@ -285,23 +281,23 @@ _check_targets() {
 _safe_copy_file() {
     local -r src="$1" dst="$2"
     _log "copying ${src} to ${dst}"
-    _vfei "$src" \
-        && _vpei "$dst" \
-        && _vpwi "$dst" \
-        && _gce cp "$src" "$dst" \
-        && _vdwi "$src" "${dst}/$(basename "${src}")"
+    _vfed "$src" \
+        && _vped "$dst" \
+        && _vpwd "$dst" \
+        && _gci cp "$src" "$dst" \
+        && _vdwd "$src" "${dst}/$(basename "${src}")"
 }
 
 _safe_shallow_copy_dir() {
     local -r src="$1" dst="$2"
     if (( USE_RSYNC > 0 )); then
-        _vpwi "$dst" \
-            && _gce rsync -qat "$WORKING_DIR" "$dst" \
-            && _gce rsync -qact "$WORKING_DIR" "$dst"
+        _vpwd "$dst" \
+            && _gci rsync -qat "$WORKING_DIR" "$dst" \
+            && _gci rsync -qact "$WORKING_DIR" "$dst"
     else
         _log "invoking cp"
-        _vpwi "${dst}" \
-            && _gce mkdir -p "${dst}/${SCRIPT_EPOCH}"
+        _vpwd "${dst}" \
+            && _gci mkdir -p "${dst}/${SCRIPT_EPOCH}"
         for f in "$src/"*; do
             _safe_copy_file "$f" "${dst}/${SCRIPT_EPOCH}"
         done
@@ -317,7 +313,7 @@ _create_recovery_data() {
 }
 
 _append_basename_element() {
-    # contract: $1: outvalue nameref new array, $2: input array
+    # contract: $1: out value nameref new array, $2: input array
     (( $# < 2 )) && _die 1 "${FUNCNAME[1]} function contract violated"
     local -ar array=("${@:2}")
     local -n newarr="$1"
@@ -370,13 +366,6 @@ _create_archive_folder() {
         _log "copying myself as ${0}"
         _safe_copy_file "${BASH_SOURCE[0]}" "${WORKING_DIR}"
     fi
-}
-
-_show_errors() {
-    if (( errors > 0 )); then
-        _log "total error count: ${errors}"
-    fi
-    return $errors
 }
 
 _blk_copy_callback() {
@@ -463,6 +452,6 @@ _create_temp
 _check_targets
 _create_archive_folder
 _process_targets
-_show_errors
 
+exit $errors
 #EOF

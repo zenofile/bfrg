@@ -19,13 +19,13 @@ The configuration file is a shell script sourced from `$XDG_CONFIG_HOME/backup/b
 #### Example configuration:
 ```
 # secure temporary file location, volatile (tmpfs) or encrypted location should be preferred
-SAFE_TMP="~/.tmp" \
+SAFE_TMP=~/.tmp \
 
 # source folders to include in the archive
-SOURCE_PATHS=( '~/mysecrets' ) \
+SOURCE_PATHS=( ~/mysecrets ) \
 
 # block layer targets where the final archive is copied to
-BLK_LOCAL_TARGETS=( "~/backup/secrets" '/media/data/backup' "/run/media/$USER/FLASH_DRIVE" ) \
+BLK_LOCAL_TARGETS=( ~/backup/secrets /media/data/backup "/run/media/$USER/FLASH_DRIVE" ) \
 
 # rsync targets, ssh is used for transport
 RSYNC_REMOTE_TARGETS=( "$USER@remote.example.org:/homes/$USER/rsync_backup/secrets" ) \
@@ -33,11 +33,11 @@ RSYNC_REMOTE_TARGETS=( "$USER@remote.example.org:/homes/$USER/rsync_backup/secre
 # rclone cloud targets, all rclone backends are supported
 RCLONE_REMOTE_TARGETS=( 'Wasabi:rclonebak/secrets' 'OneDrive:_backup/secrets' 'GoogleDrive:_backup/secrets' 'Dropbox:_backup/secrets' ) \
 
-# no interactive prompts, cound and log errors but proceed without asking questions - useful for automation
-FAIL_SILENTLY=1
+# non-interactive mode, cound and log errors but proceed without asking questions - useful for automation
+NON_INTERACTIVE=1
 ```
 
-#### Complete list of default options:
+#### Complete list of options (=default):
 ```
 BLK_LOCAL_TARGETS=()        # block targets (HD, SSD, ..)
 SCP_REMOTE_TARGETS=()       # scp remote targets
@@ -50,7 +50,8 @@ SELF_REPLICATE=1            # copy bfrg.sh to the target
 SAFE_DELETE=1               # use *shred* before deleting temporary files, recommended if SAFE_TMP is on a harddisk
 DATA_REDUNDANCY=5           # add 5% recovery data
 VERBOSE=1                   # be verbose by default
-FAIL_SILENTLY=0             # prompt user by default if the script encounters an error
+NON_INTERACTIVE=0           # prompt user by default if the script encounters an error
+ERROR_ABORT=0               # stop processing any further targets if encountering an error in non-interactive mode
 SAFE_TMP='/tmp'             # directory used for creating the archive
 
 EXCLUDE_LIST=( 'System Volume Information' '*~' '#*#' '.#*' 'tmp' '.tmp' '.nv' 'GPUCache' '.ccache' '.cache' '.var' )
