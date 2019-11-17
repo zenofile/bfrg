@@ -50,7 +50,7 @@ FAIL_SILENTLY=${FAIL_SILENTLY:-0}
 SAFE_TMP="${SAFE_TMP:-/tmp}"
 EXCLUDE_LIST=( "${EXCLUDE_LIST[@]:-${default_excludes[@]}}" )
 ARCHIVE_NAME="${ARCHIVE_NAME:-keys_${SCRIPT_EPOCH}.tar.xz}"
-LOG_FILE="${LOG_FILE:-archive-directory_${SCRIPT_EPOCH}.log}"
+LOG_FILE="${LOG_FILE:-bfrg-${SCRIPT_EPOCH}.log}"
 COMPRESSOR_CMD="${COMPRESSOR_CMD:-xz}"
 COMPRESSOR_OPT="${COMPRESSOR_OPT:--q -9e --threads=0 -v}"
 
