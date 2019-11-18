@@ -24,7 +24,7 @@ set -o errexit
 declare -i errors=0
 
 readonly SCRIPT_EPOCH=${EPOCHSECONDS:-$(date '+%s')} \
-            cfg=${XDG_CONFIG_HOME:-~/.config}'/backup/bfrg/config'
+            cfg="${XDG_CONFIG_HOME:-${HOME}/.config}/backup/bfrg/config"
             default_excludes=('System Volume Information' '*~' '#*#' '.#*' 'tmp' '.tmp' '.nv' 'GPUCache' '.ccache' '.cache' '.var')
 
 # satisfy -o nounset 
