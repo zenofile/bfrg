@@ -7,6 +7,7 @@ set -o errexit
 [[ ${TRACE:-} ]] && set -o xtrace
 
 source "$(dirname "${BASH_SOURCE[0]}")/bfrg.sh"
+# shellcheck disable=SC2034
 LOG_FILE="restore-${SCRIPT_EPOCH}.log"
 
 _verify_repair() {
@@ -18,8 +19,13 @@ _verify_repair() {
 
 _decrypt_stdout() {
     local -r infile="$1"
+    local -r ts="${infile%%.*}"
+    
+    mkdir -p "$ts"
+    trap 'rmdir --ignore-fail-on-non-empty $ts' ERR SIGINT
+
     _log "attempting file decryption and unpacking"
-    command gpg --decrypt "$infile" | command xz -d | command tar -xv --
+    command gpg --decrypt -- "$infile" | command "$COMPRESSOR_CMD" -d -- | command tar -C "$ts" -xv --
 }
 
 (($# < 1)) && _die "no input file specified" 
