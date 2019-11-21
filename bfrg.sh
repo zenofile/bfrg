@@ -441,6 +441,9 @@ _process_targets() {
     fi
 }
 
+# stop here if we got sourced
+(return 0 2>/dev/null) && return
+
 if [[ -n ${DEBUG:-} ]]; then
     trap '_cleanup "${?}" "${LINENO}" "${BASH_LINENO}" "${BASH_COMMAND}" $(printf "::%s" ${FUNCNAME[@]:-})' ERR EXIT SIGINT
 else
