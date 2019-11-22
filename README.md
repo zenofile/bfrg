@@ -44,6 +44,9 @@ SCP_REMOTE_TARGETS=()       # scp remote targets
 RSYNC_REMOTE_TARGETS=()     # rsync remote targets - uses ssh for transport, public key authentication strongly recommended
 RCLONE_REMOTE_TARGETS=()    # rclone targets - must be configured inside rclone already
 
+ARCHIVE_NAME="archive_${SCRIPT_EPOCH}.tar.xz"
+LOG_FILE="bfrg_${SCRIPT_EPOCH}.log}"
+
 ARCHIVE_CLEANUP=1           # cleanup old archived on block targets (only works with BLK)
 KEEP_DAYS=365               # days to keep archives - also ensures that one last archive is available at all times
 SELF_REPLICATE=1            # copy bfrg.sh to the target
@@ -52,13 +55,14 @@ DATA_REDUNDANCY=5           # add 5% recovery data
 VERBOSE=1                   # be verbose by default
 NON_INTERACTIVE=0           # prompt user by default if the script encounters an error
 ERROR_ABORT=0               # stop processing any further targets if encountering an error in non-interactive mode
-SAFE_TMP='/tmp'             # directory used for creating the archive
+SAFE_TMP='/tmp'             # directory used for creating the archive, recommended to be on a secure or volatile device
+
+COMPRESSOR_CMD='xz'         # default compressor; the restore script supposes availability of -d for decompression
+COMPRESSOR_OPT='-q -9e --threads=0 -v'
 
 EXCLUDE_LIST=( 'System Volume Information' '*~' '#*#' '.#*' 'tmp' '.tmp' '.nv' 'GPUCache' '.ccache' '.cache' '.var' )
-ARCHIVE_NAME="keys_${SCRIPT_EPOCH}.tar.xz"
-LOG_FILE="bfrg_${SCRIPT_EPOCH}.log}"
-COMPRESSOR_CMD='xz'
-COMPRESSOR_OPT='-q -9e --threads=0 -v'
 ```
 
-For cloud target locations (Google Drive, Amazon S3, OneDrive etc.), [**rclone**](https://github.com/rclone/rclone), with the desired services already configured, is a prerequisite. For adding optional redundant information (enabled by default), [**par2cmdline**](https://github.com/Parchive/par2cmdline) (available in the default repositories of Debian, Fedora and Archlinux) is used.
+For cloud target locations (Google Drive, Amazon S3, OneDrive etc.), [**rclone**](https://github.com/rclone/rclone), with the desired services already configured, is a prerequisite. For adding optional redundant information (enabled by default), [**par2cmdline**](https://github.com/Parchive/par2cmdline), available in the default repositories of Debian, Fedora and Archlinux and most other distributions, is used.  
+
+The [recovery script](https://github.com/zenofx/bfrg/blob/master/restore.sh) takes an encrypted archive as an argument and repairs it if necessary, if redundant information is available, before it is unpacked into the current working directory.

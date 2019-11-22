@@ -25,6 +25,7 @@ _decrypt_stdout() {
     trap 'rmdir --ignore-fail-on-non-empty $ts' ERR SIGINT
 
     _log "attempting file decryption and unpacking"
+    # assume the compressor supports -d for decompression and accepts stdin
     command gpg --decrypt -- "$infile" | command "$COMPRESSOR_CMD" -d -- | command tar -C "$ts" -xv --
 }
 
