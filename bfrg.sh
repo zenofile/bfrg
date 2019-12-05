@@ -345,7 +345,7 @@ _create_archive_folder() {
     { command tar --exclude-from="${MYTMP}/excludes.list" --exclude-caches -cf - "${SOURCE_PATHS[@]}" \
         | eval "$COMPRESSOR_CMD $COMPRESSOR_OPT" > "${MYTMP}/${ARCHIVE_NAME}"; } 2>&1 | command tee -a "$LOG_ABS"
     local -r tar_pipe_status=$?
-    command gpg -q --symmetric --cipher-algo AES256 --output "${ARCHIVE_SOURCE_PATH}" "${MYTMP}/${ARCHIVE_NAME}" 2>&1 \
+    command gpg -q --symmetric --cipher-algo AES256 --compress-algo none --output "${ARCHIVE_SOURCE_PATH}" "${MYTMP}/${ARCHIVE_NAME}" 2>&1 \
         | command tee -a "$LOG_ABS"
     local -r gpg_pipe_status=$?
 
