@@ -9,36 +9,36 @@ set -o errexit
 # shellcheck disable=SC1090
 source "$(dirname "${BASH_SOURCE[0]}")/bfrg.sh"
 # shellcheck disable=SC2034
-LOG_FILE="restore-${SCRIPT_EPOCH}.log"
+LOG_FILE=restore-${SCRIPT_EPOCH}.log
 
 verify_repair() {
-    local -r infile="$1"
+    local -r infile=${1}
     require_command par2 || return 0
-    log "attempting file verification"
+    log 'attempting file verification'
     command par2 repair -- "$infile"
 }
 
 decrypt_stdout() {
-    local -r infile="$1"
-    local -r ts="${infile%%.*}"
+    local -r infile=${1}
+    local -r ts=${infile%%.*}
     
-    mkdir -p "$ts"
-    trap 'rmdir --ignore-fail-on-non-empty $ts' ERR SIGINT
+    mkdir -p "${ts}"
+    trap 'rmdir --ignore-fail-on-non-empty ${ts}' ERR SIGINT
 
-    log "attempting file decryption and unpacking"
+    log 'attempting file decryption and unpacking'
     # assume the compressor supports -d for decompression and accepts stdin
-    command gpg --decrypt -- "$infile" | command "$COMPRESSOR_CMD" -d -- | command tar -C "$ts" -xv --
+    command gpg --decrypt -- "${infile}" | command "${COMPRESSOR_CMD}" -d -- | command tar -C "${ts}" -xv --
 }
 
 (($# < 1)) && die "no input file specified"
-readonly INFILE="$1"
+readonly INFILE=${1}
 
 init_logger
 
-if ! verify_file_exists "$INFILE"; then
+if ! verify_file_exists "${INFILE}"; then
     die "cannot read file ${INFILE}"
 fi
 
 ensure_commands gpg xz tar
-verify_repair "$INFILE"
-decrypt_stdout "$INFILE"
+verify_repair "${INFILE}"
+decrypt_stdout "${INFILE}"

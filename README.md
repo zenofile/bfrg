@@ -17,7 +17,8 @@ ssh par2 rsync rclone scp
 The configuration file is a shell script sourced from `$XDG_CONFIG_HOME/backup/bfrg/config` by default.
 
 #### Example configuration:
-```
+
+```bash
 # secure temporary file location, volatile (tmpfs) or encrypted location should be preferred
 SAFE_TMP=~/.tmp \
 
@@ -25,10 +26,10 @@ SAFE_TMP=~/.tmp \
 SOURCE_PATHS=( ~/mysecrets ) \
 
 # block layer targets where the final archive is copied to
-BLK_LOCAL_TARGETS=( ~/backup/secrets /media/data/backup "/run/media/$USER/FLASH_DRIVE" ) \
+BLK_LOCAL_TARGETS=( ~/backup/secrets /media/data/backup /run/media/${USER}/FLASH_DRIVE ) \
 
 # rsync targets, ssh is used for transport
-RSYNC_REMOTE_TARGETS=( "$USER@remote.example.org:/homes/$USER/rsync_backup/secrets" ) \
+RSYNC_REMOTE_TARGETS=( ${USER}@remote.example.org:/homes/${USER}/rsync_backup/secrets ) \
 
 # rclone cloud targets, all rclone backends are supported
 RCLONE_REMOTE_TARGETS=( 'Wasabi:rclonebak/secrets' 'OneDrive:_backup/secrets' 'GoogleDrive:_backup/secrets' 'Dropbox:_backup/secrets' ) \
@@ -38,14 +39,15 @@ NON_INTERACTIVE=1
 ```
 
 #### Complete list of options (=default):
-```
+
+```bash
 BLK_LOCAL_TARGETS=()        # block targets (HD, SSD, ..)
 SCP_REMOTE_TARGETS=()       # scp remote targets
 RSYNC_REMOTE_TARGETS=()     # rsync remote targets - uses ssh for transport, public key authentication strongly recommended
 RCLONE_REMOTE_TARGETS=()    # rclone targets - must be configured inside rclone already
 
-ARCHIVE_NAME="archive_${SCRIPT_EPOCH}.tar.xz"
-LOG_FILE="bfrg_${SCRIPT_EPOCH}.log}"
+ARCHIVE_NAME=archive_${SCRIPT_EPOCH}.tar.xz
+LOG_FILE=bfrg_${SCRIPT_EPOCH}.log}
 
 ARCHIVE_CLEANUP=1           # cleanup old archived on block targets (only works with BLK)
 KEEP_DAYS=365               # days to keep archives - also ensures that one last archive is available at all times
@@ -55,10 +57,10 @@ DATA_REDUNDANCY=5           # add 5% recovery data
 VERBOSE=1                   # be verbose by default
 NON_INTERACTIVE=0           # prompt user by default if the script encounters an error
 ERROR_ABORT=0               # stop processing any further targets if encountering an error in non-interactive mode
-SAFE_TMP='/tmp'             # directory used for creating the archive, recommended to be on a secure or volatile device
+SAFE_TMP=/tmp             # directory used for creating the archive, recommended to be on a secure or volatile device
 
-COMPRESSOR_CMD='xz'         # default compressor; the restore script supposes availability of -d for decompression
-COMPRESSOR_OPT='-q -9e --threads=0 -v'
+COMPRESSOR_CMD=xz         # default compressor; the restore script supposes availability of -d for decompression
+COMPRESSOR_OPT=-q -9e --threads=0 -v
 
 EXCLUDE_LIST=( 'System Volume Information' '*~' '#*#' '.#*' 'tmp' '.tmp' '.nv' 'GPUCache' '.ccache' '.cache' '.var' )
 ```
