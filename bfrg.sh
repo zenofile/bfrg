@@ -142,6 +142,7 @@ cleanup() {
     gc sync
 
     (( errors > 0 )) && log "total number of non-zero returns: ${errors}"
+    exit ${errors}
 }
 
 gc() {
@@ -447,9 +448,9 @@ process_targets() {
 (return 0 2>/dev/null) && return
 
 if [[ -n ${DEBUG:-} ]]; then
-    trap 'cleanup "${?}" "${LINENO}" "${BASH_LINENO}" "${BASH_COMMAND}" $(printf "::%s" ${FUNCNAME[@]:-})' ERR EXIT SIGINT
+    trap 'cleanup "${?}" "${LINENO}" "${BASH_LINENO}" "${BASH_COMMAND}" $(printf "::%s" ${FUNCNAME[@]:-})' EXIT
 else
-    trap 'cleanup 0' ERR EXIT SIGINT
+    trap 'cleanup 0' EXIT
 fi
 
 init_logger
@@ -458,5 +459,4 @@ check_targets
 create_archive_folder
 process_targets
 
-exit ${errors}
 #EOF
