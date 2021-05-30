@@ -1,19 +1,5 @@
 #!/usr/bin/env bash
 
-# - SAFE_TMP should ideally point to an encrypted or volatile
-#   location in order to avoid leaking data to the block device
-# - ARCHIVE_CLEANUP operates only on BLK_LOCAL_TARGETS
-# - Speedier GoogleDrive: https://rclone.org/drive/#making-your-own-client-id
-
-#   variables to be defined in ${XDG_CONFIG_HOME:-~/.config}/backup/bfrg/config"
-#   theoretically only SOURCE_PATHS is essential
-#   examples:
-#     SOURCE_PATHS=(~/Documents ~/Pictures) \
-#     BLK_LOCAL_TARGETS=(/media/data/backup /run/media/${USER}/FLASHDRIVE/backup) \
-#     SCP_REMOTE_TARGETS=(user@hostname:/data/backup) \
-#     RSYNC_REMOTE_TARGETS=(user@hostname2:/data/backup) \
-#     RCLONE_REMOTE_TARGETS=(OneDrive:_backup GoogleDrive:_backup Dropbox:_backup/secrets)
-
 set -o nounset
 set -o pipefail
 set -o errexit
@@ -54,8 +40,11 @@ SAFE_TMP=${SAFE_TMP:-/tmp}
 EXCLUDE_LIST=( "${EXCLUDE_LIST[@]:-${default_excludes[@]}}" )
 ARCHIVE_NAME=${ARCHIVE_NAME:-archive_${SCRIPT_EPOCH}.tar.xz}
 LOG_FILE=${LOG_FILE:-bfrg-${SCRIPT_EPOCH}.log}
-COMPRESSOR_CMD=${COMPRESSOR_CMD:-xz}
-COMPRESSOR_OPT=${COMPRESSOR_OPT:--q -9e --threads=0 -v}
+GPG_CIPHER=${GPG_CIPHER:-AES256}
+GPG_DIGEST=${GPG_DIGEST:-SHA512}
+GPG_MANGLE_MODE=${GPG_MANGLE_MODE:-3}
+GPG_MANGLE_ITERATIONS=${GPG_MANGLE_ITERATIONS:-65011712}
+[[ ! -v COMPRESSOR_CMD[@] ]] && COMPRESSOR_CMD=( xz --q -9e --threads=0 -v )
 
 init_logger() {
     # shellcheck disable=SC2016
@@ -236,7 +225,7 @@ vpwd() { verify_path_writable "${1}" || input_dispatch "Path ${1} is not writabl
 vdwd() { verify_data_written "${1}" "${2}" || input_dispatch "There was an error validating ${2}, continue?"; }
 
 check_targets() {
-    ensure_commands gpg find "${COMPRESSOR_CMD}"
+    ensure_commands gpg find "${COMPRESSOR_CMD[0]}"
     declare -g USE_RSYNC=1 USE_SCP=1 USE_RCLONE=1
 
     (( ${#BLK_LOCAL_TARGETS[@]} > 0 )) || die 1 'no block target configured'
@@ -345,10 +334,16 @@ create_archive_folder() {
     gce mkdir -p "${WORKING_DIR}"
     compile_exclude_file
 
-    { command tar --exclude-from="${MYTMP}/excludes.list" --exclude-caches -cf - "${SOURCE_PATHS[@]}" \
-        | eval "${COMPRESSOR_CMD} ${COMPRESSOR_OPT}" > "${MYTMP}/${ARCHIVE_NAME}"; } 2>&1 | command tee -a "${LOG_ABS}"
+    # workaround until better logging exists
+    log "invoking tar --exclude-from=${MYTMP}/excludes.list --exclude-caches -cf - ${SOURCE_PATHS[*]} | ${COMPRESSOR_CMD[*]} > ${MYTMP}/${ARCHIVE_NAME}"
+
+    { command tar --exclude-from="${MYTMP}/excludes.list" --exclude-caches -cf - "${SOURCE_PATHS[@]}" 2>/dev/null \
+        | "${COMPRESSOR_CMD[@]}" > "${MYTMP}/${ARCHIVE_NAME}"; } 2>&1 | command tee -a "${LOG_ABS}"
+
+    local -r gpg_opts=( --s2k-cipher-algo "${GPG_CIPHER}" --s2k-digest-algo "${GPG_DIGEST}" --s2k-mode "${GPG_MANGLE_MODE}" --s2k-count "${GPG_MANGLE_ITERATIONS}" )
+   
     local -r tar_pipe_status=$?
-    command gpg -q --symmetric --cipher-algo AES256 --compress-algo none --output "${ARCHIVE_SOURCE_PATH}" "${MYTMP}/${ARCHIVE_NAME}" 2>&1 \
+    gce gpg -q --symmetric --compress-algo none "${gpg_opts[@]}" --output "${ARCHIVE_SOURCE_PATH}" "${MYTMP}/${ARCHIVE_NAME}" 2>&1 \
         | command tee -a "${LOG_ABS}"
     local -r gpg_pipe_status=$?
 
