@@ -4,6 +4,8 @@ set -o nounset
 set -o pipefail
 set -o errexit
 
+shopt -s lastpipe
+
 [[ ${TRACE:-} ]] && set -o xtrace
 
 (( ${BASH_VERSINFO:-0} < 4 )) && { echo 'script requires bash version >= 4'; exit 3; }
@@ -453,5 +455,3 @@ create_temp
 check_targets
 create_archive_folder
 process_targets
-
-#EOF

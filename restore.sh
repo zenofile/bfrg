@@ -4,6 +4,8 @@ set -o nounset
 set -o pipefail
 set -o errexit
 
+shopt -s lastpipe
+
 [[ ${TRACE:-} ]] && set -o xtrace
 
 # shellcheck disable=SC1090
@@ -26,8 +28,8 @@ decrypt_stdout() {
     trap 'rmdir --ignore-fail-on-non-empty ${ts}' ERR SIGINT
 
     log 'attempting file decryption and unpacking'
-    # assume the compressor supports -d for decompression and accepts stdin
-    command gpg --decrypt -- "${infile}" | command "${COMPRESSOR_CMD}" -d -- | command tar -C "${ts}" -xv --
+    # assume the compressor supports -d for decompression
+    command gpg --decrypt -- "${infile}" | command "${COMPRESSOR_CMD[0]}" -d -- | command tar -C "${ts}" -xv --
 }
 
 (($# < 1)) && die "no input file specified"
@@ -39,6 +41,6 @@ if ! verify_file_exists "${INFILE}"; then
     die "cannot read file ${INFILE}"
 fi
 
-ensure_commands gpg xz tar
+ensure_commands gpg tar "${COMPRESSOR_CMD[0]}"
 verify_repair "${INFILE}"
 decrypt_stdout "${INFILE}"
