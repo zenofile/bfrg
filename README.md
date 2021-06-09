@@ -43,6 +43,7 @@ The configuration file is a shell script sourced from `$XDG_CONFIG_HOME/backup/b
 | SAFE_TMP | V | `/tmp` | Temporary directory. Volatile storage recommended.|
 | COMPRESSOR_CMD | A | `( xz --q -9e --threads=0 -v )` | Compressor and its arguments being used for compression. |
 | EXCLUDE_LIST | A | `( 'System Volume Information' ' *~' '#*#' '.#* ' 'tmp' '.tmp' '.nv' 'GPUCache' '.ccache' '.cache' '.var' )` | From archiving excluded directories. |
+| RCLONE_TASKS | V | `2` | Concurrent rclone tasks. |
 | GPG_CIPHER | V | `AES256` | Encryption cipher. |
 | GPG_DIGEST | V | `SHA512` | Encryption digest. |
 | GPG_MANGLE_MODE | V | `3` | Mangle mode. |
