@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# vim: ft=bash ts=4 sw=4 sts=-1 et
 
 set -o nounset
 set -o pipefail
@@ -15,7 +16,7 @@ readonly SCRIPT_EPOCH=${EPOCHSECONDS:-$(date '+%s')} \
             cfg=${XDG_CONFIG_HOME:-${HOME}/.config}/backup/bfrg/config
             default_excludes=('System Volume Information' '*~' '#*#' '.#*' 'tmp' '.tmp' '.nv' 'GPUCache' '.ccache' '.cache' '.var')
 
-# satisfy -o nounset 
+# satisfy -o nounset
 declare -a SOURCE_PATHS=() BLK_LOCAL_TARGETS=() SCP_REMOTE_TARGETS=() RSYNC_REMOTE_TARGETS=() RCLONE_REMOTE_TARGETS=()
 
 die() {
@@ -42,6 +43,7 @@ SAFE_TMP=${SAFE_TMP:-/tmp}
 EXCLUDE_LIST=( "${EXCLUDE_LIST[@]:-${default_excludes[@]}}" )
 ARCHIVE_NAME=${ARCHIVE_NAME:-archive_${SCRIPT_EPOCH}.tar.xz}
 LOG_FILE=${LOG_FILE:-bfrg-${SCRIPT_EPOCH}.log}
+RCLONE_TASKS=${RCLONE_TASKS:-2}
 GPG_CIPHER=${GPG_CIPHER:-AES256}
 GPG_DIGEST=${GPG_DIGEST:-SHA512}
 GPG_MANGLE_MODE=${GPG_MANGLE_MODE:-3}
@@ -332,7 +334,7 @@ create_archive_folder() {
             die 1 "invalid path ${src_path}"
         fi
     done
-    
+
     gce mkdir -p "${WORKING_DIR}"
     compile_exclude_file
 
@@ -343,7 +345,7 @@ create_archive_folder() {
         | "${COMPRESSOR_CMD[@]}" > "${MYTMP}/${ARCHIVE_NAME}"; } 2>&1 | command tee -a "${LOG_ABS}"
 
     local -r gpg_opts=( --s2k-cipher-algo "${GPG_CIPHER}" --s2k-digest-algo "${GPG_DIGEST}" --s2k-mode "${GPG_MANGLE_MODE}" --s2k-count "${GPG_MANGLE_ITERATIONS}" )
-   
+
     local -r tar_pipe_status=$?
     gce gpg -q --symmetric --compress-algo none "${gpg_opts[@]}" --output "${ARCHIVE_SOURCE_PATH}" "${MYTMP}/${ARCHIVE_NAME}" 2>&1 \
         | command tee -a "${LOG_ABS}"
@@ -371,6 +373,7 @@ create_archive_folder() {
 blk_copy_callback() {
     local -r dst=${1}
     log 'copying archive folder'
+    sleep 5s
     safe_shallow_copy_dir "${WORKING_DIR}" "${dst}"
 }
 
@@ -390,7 +393,7 @@ rclone_copy_callback() {
     local -r dst=${1}
     log "using rclone for copying ${dst}"
     gci rclone -q copy "${WORKING_DIR}" "${dst}/${SCRIPT_EPOCH}"
-    log 'verifying copied files'
+    log "verifying copied files for ${dst}"
     gci rclone -q check --one-way "${WORKING_DIR}" "${dst}/${SCRIPT_EPOCH}"
 }
 
@@ -411,7 +414,7 @@ archive_cleanup_callback() {
 apply_do_path() {
     # $1 -> target paths array name (ref)
     # $2 -> function pointer (ref)
-    # $@:3 -> any other arguments that should be forwarded to the function
+    # $@:3 -> forward arguments
     local -n target_paths=${2}
     local -r delegate=${1}
     for path in "${target_paths[@]}"; do
@@ -424,6 +427,40 @@ apply_do_path() {
     done
 }
 
+apply_do_path_parallel() {
+    # $1 -> number of concurrent processes
+    # $2 -> target paths array name (ref)
+    # $3 -> function pointer (ref)
+    # $@:4 -> forward arguments
+    local -i num_procs=${1}
+    local -r delegate=${2}
+    local -n target_paths=${3}
+    local -r fifo=$(mktemp -u)
+    mkfifo "${fifo}"
+    exec 3<>"${fifo}"
+    rm -f "${fifo}"
+
+    for ((i=0; i<num_procs; ++i)); do
+        echo 'p' >&3
+    done
+
+    for path in "${target_paths[@]}"; do
+        read -r _ <&3
+        (
+            trap 'echo p >&3' EXIT
+            log "parallel processing ${path}"
+            # shellcheck disable=SC2155
+            local arg=$([[ -n ${*:4} ]] && printf " with argument(s) '%s'" "${*:4}")
+            log "applying function ${delegate}${arg}"
+            unset arg
+            ${delegate} "${path}" "${@:4}"
+        ) &
+    done
+    wait
+    exec 3>&-
+}
+
+
 process_targets() {
     # $1 -> target paths array name (ref)
     apply_do_path blk_copy_callback BLK_LOCAL_TARGETS
@@ -434,7 +471,7 @@ process_targets() {
         apply_do_path scp_copy_callback SCP_REMOTE_TARGETS
     fi
     if (( USE_RCLONE > 0 )); then
-        apply_do_path rclone_copy_callback RCLONE_REMOTE_TARGETS
+        apply_do_path_parallel "${RCLONE_TASKS}" rclone_copy_callback RCLONE_REMOTE_TARGETS
     fi
     if (( ARCHIVE_CLEANUP > 0 )); then
         apply_do_path archive_cleanup_callback BLK_LOCAL_TARGETS "${KEEP_DAYS}"
